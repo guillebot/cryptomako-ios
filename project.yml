@@ -1,0 +1,75 @@
+name: CryptoMako
+
+options:
+  bundleIdPrefix: net.gschimmel
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+packages:
+  CryptoMako:
+    path: .
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.10"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: "H4K6YW7MQM"
+    ENABLE_PREVIEWS: YES
+
+targets:
+  CryptoMako:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/CryptoMakoApp
+        excludes:
+          - Resources/**
+      - path: Sources/CryptoMakoApp/Resources
+        buildPhase: resources
+        optional: true
+    dependencies:
+      - package: CryptoMako
+        product: CryptoMakoVault
+      - package: CryptoMako
+        product: CryptoMakoS3
+      - package: CryptoMako
+        product: CryptoMakoShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.gschimmel.cryptomako.ios
+        PRODUCT_NAME: CryptoMako
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_ENTITLEMENTS: Support/CryptoMako.entitlements
+    info:
+      path: Support/CryptoMako-Info.plist
+      properties:
+        CFBundleName: CryptoMako
+        CFBundleDisplayName: CryptoMako
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSHumanReadableCopyright: "© 2026 Guillermo Schimmel. AGPLv3."
+        # ATS on (default): cleartext HTTP to S3 is blocked. Local fixtures use DirectoryObjectStore.
+
+schemes:
+  CryptoMako:
+    build:
+      targets:
+        CryptoMako: all
+    run:
+      config: Debug

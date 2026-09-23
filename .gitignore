@@ -1,0 +1,19 @@
+.build/
+.swiftpm/
+*.xcodeproj
+xcuserdata/
+*.xcworkspace
+.DS_Store
+.env
+.env.*
+*.pem
+*.key
+*.p12
+
+# Golden vault ciphertext + fixture password (same policy as macOS cryptomako).
+# Copy or symlink from ../cryptomako/fixtures for local unlock+list testing:
+#   cp -R ../cryptomako/fixtures/PASSWORD ../cryptomako/fixtures/vault fixtures/
+fixtures/PASSWORD
+fixtures/vault/
+
+DerivedData/
