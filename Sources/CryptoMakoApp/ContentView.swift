@@ -21,7 +21,7 @@ struct ContentView: View {
             .toolbar {
                 if case .browsing = model.phase {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button("Lock") { model.lock() }
+                        Button("Lock") { Task { await model.lock() } }
                     }
                 }
             }

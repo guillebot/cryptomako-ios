@@ -128,20 +128,38 @@ final class VaultAppModel: ObservableObject {
         }
     }
 
-    func lock() {
-        backupTask?.cancel()
-        backupTask = nil
-        backupActive = false
+    /// Product Lock (Platforms): cancel on-device backup first, then unregister the
+    /// Files File Provider domain. Does **not** wipe Keychain passphrase/S3 secret
+    /// or VaultSettings (Forget credentials is a separate, deferred control).
+    func lock() async {
+        // 1) Cancel backup first (Mac PR #5 spirit: sync/cancel before unmount).
+        cancelOnDeviceBackup(userMessage: nil)
+        // 2) Drop in-process session (masterkey) + browse UI.
         session = nil
         nodes = []
         pathStack = []
         previewText = nil
         previewTitle = nil
         phase = .locked
-        statusMessage = "Locked."
-        // Drop in-process cleartext leftovers; Keychain secrets stay so Files can remount.
+        statusMessage = "Locked. Backup cancelled; Files location unregistering."
+        // 3) Scrub open/preview temps (secrets stay in Keychain).
         Self.scrubOpenTemps()
-        Task { await removeFileProviderDomains() }
+        // 4) Unregister Files domain and await so Lock is durable before return.
+        await removeFileProviderDomains()
+        statusMessage = "Locked."
+    }
+
+    /// Shared cancel path for Lock and the Backup UI button. Keychain untouched.
+    private func cancelOnDeviceBackup(userMessage: String?) {
+        backupTask?.cancel()
+        backupTask = nil
+        backupActive = false
+        backupCurrentName = ""
+        backupDone = 0
+        backupTotal = 0
+        if let userMessage {
+            statusMessage = userMessage
+        }
     }
 
     func enterDirectory(_ node: VaultNode) async {
@@ -319,10 +337,7 @@ final class VaultAppModel: ObservableObject {
     // MARK: - M4 On-device backup
 
     func cancelBackup() {
-        backupTask?.cancel()
-        backupTask = nil
-        backupActive = false
-        statusMessage = "Backup cancelled."
+        cancelOnDeviceBackup(userMessage: "Backup cancelled.")
     }
 
     func backupFolder(at rootURL: URL) {

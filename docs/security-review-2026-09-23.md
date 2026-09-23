@@ -31,10 +31,10 @@ _None found that are exploitable with current architecture without already compr
 ## Medium
 
 ### M1 — UI “Lock” does not wipe Keychain passphrase / S3 secret
-- **Why:** `lock()` nils `VaultSession` (in-process masterkey) and removes the File Provider domain, but **does not** `CredentialStore.delete` and leaves `@Published password` / `secretKey` populated for the connection form.
-- **Refs:** `VaultAppModel.lock`; `CredentialStore` accounts `vault-password`, `s3-secret-key`.
-- **Impact:** By design for Files remount, but a user who expects “Lock” to forget secrets is wrong. Device unlock after first unlock still allows FP to re-read Keychain (`AfterFirstUnlockThisDeviceOnly`).
-- **Fixed:** N — document; recommend optional “Forget credentials” control (follow-up).
+- **Why:** Product Lock (Platforms 2026-09-23) = cancel on-device backup + unregister Files domain only. `lock()` does **not** `CredentialStore.delete` and leaves connection fields; Forget credentials is deferred.
+- **Refs:** `VaultAppModel.lock` / `cancelOnDeviceBackup`; `CredentialStore` accounts `vault-password`, `s3-secret-key`.
+- **Impact:** By design. Device unlock after first unlock still allows FP to re-read Keychain if the domain is registered again after Unlock (`AfterFirstUnlockThisDeviceOnly`).
+- **Fixed:** N (intentional) — optional “Forget credentials” remains a separate follow-up; **no** wipe-store settings keys.
 
 ### M2 — S3 access key ID stored in App Group `settings.json`
 - **Why:** `VaultSettings` persists non-secret fields including `accessKey` to the App Group for the File Provider; **secret key** correctly stays in Keychain.
