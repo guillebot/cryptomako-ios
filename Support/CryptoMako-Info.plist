@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Guillermo Schimmel. AGPLv3.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>CryptoMako can upload photos you choose into your encrypted vault.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

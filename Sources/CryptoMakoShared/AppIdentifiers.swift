@@ -2,11 +2,12 @@ import Foundation
 
 public enum AppIdentifiers {
     public static let hostBundleID = "net.gschimmel.cryptomako.ios"
-    /// Reserved for a future Files provider appex (M3).
     public static let extensionBundleID = "net.gschimmel.cryptomako.ios.FileProvider"
-    /// Team-prefixed App Group. Entitlements still use $(AppIdentifierPrefix);
-    /// this Swift constant must be the literal form or containerURL returns nil.
-    public static let appGroup = "H4K6YW7MQM.group.net.gschimmel.cryptomako.ios"
+    public static let shareExtensionBundleID = "net.gschimmel.cryptomako.ios.Share"
+
+    /// iOS App Groups use the bare `group.` form (matches entitlements).
+    /// macOS sibling uses a team-prefixed group on a different bundle — not shared.
+    public static let appGroup = "group.net.gschimmel.cryptomako.ios"
 
     /// Keychain service name.
     public static let keychainService = "net.gschimmel.cryptomako.ios"
@@ -21,4 +22,7 @@ public enum AppIdentifiers {
     public static func domainIdentifier(jti: String) -> String {
         "cryptomako.ios.\(jti)"
     }
+
+    /// App-group relative folder where the Share extension drops inbound files.
+    public static let shareInboxFolderName = "ShareInbox"
 }

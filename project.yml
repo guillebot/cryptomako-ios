@@ -13,12 +13,14 @@ packages:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "100"
     SWIFT_VERSION: "5.10"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: "H4K6YW7MQM"
-    ENABLE_PREVIEWS: YES
+    # File Provider appex fails silently with debug dylib splits.
+    ENABLE_DEBUG_DYLIB: NO
+    ENABLE_PREVIEWS: NO
 
 targets:
   CryptoMako:
@@ -31,6 +33,9 @@ targets:
       - path: Sources/CryptoMakoApp/Resources
         buildPhase: resources
         optional: true
+      - path: Support/Brand/Assets.xcassets
+      - path: Support/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: CryptoMako
         product: CryptoMakoVault
@@ -38,12 +43,19 @@ targets:
         product: CryptoMakoS3
       - package: CryptoMako
         product: CryptoMakoShared
+      - target: CryptoMakoFileProvider
+        embed: true
+        codeSign: true
+      - target: CryptoMakoShare
+        embed: true
+        codeSign: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: net.gschimmel.cryptomako.ios
         PRODUCT_NAME: CryptoMako
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_ENTITLEMENTS: Support/CryptoMako.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: Support/CryptoMako-Info.plist
       properties:
@@ -64,12 +76,90 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSHumanReadableCopyright: "© 2026 Guillermo Schimmel. AGPLv3."
+        NSPhotoLibraryUsageDescription: "CryptoMako can upload photos you choose into your encrypted vault."
         # ATS on (default): cleartext HTTP to S3 is blocked. Local fixtures use DirectoryObjectStore.
+
+  CryptoMakoFileProvider:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/CryptoMakoFileProvider
+    dependencies:
+      - package: CryptoMako
+        product: CryptoMakoVault
+      - package: CryptoMako
+        product: CryptoMakoS3
+      - package: CryptoMako
+        product: CryptoMakoShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.gschimmel.cryptomako.ios.FileProvider
+        PRODUCT_NAME: CryptoMakoFileProvider
+        CODE_SIGN_ENTITLEMENTS: Support/CryptoMakoFileProvider.entitlements
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        # Avoid LD_RUNPATH issues with embedded appex
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+    info:
+      path: Support/CryptoMakoFileProvider-Info.plist
+      properties:
+        CFBundleName: CryptoMakoFileProvider
+        CFBundleDisplayName: CryptoMako
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-nonui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
+          NSExtensionFileProviderSupportsEnumeration: true
+        NSExtensionFileProviderDocumentGroup: group.net.gschimmel.cryptomako.ios
+
+  CryptoMakoShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/CryptoMakoShare
+    dependencies:
+      - package: CryptoMako
+        product: CryptoMakoShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.gschimmel.cryptomako.ios.Share
+        PRODUCT_NAME: CryptoMakoShare
+        CODE_SIGN_ENTITLEMENTS: Support/CryptoMakoShare.entitlements
+        SKIP_INSTALL: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+    info:
+      path: Support/CryptoMakoShare-Info.plist
+      properties:
+        CFBundleName: CryptoMakoShare
+        CFBundleDisplayName: CryptoMako
+        CFBundlePackageType: XPC!
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsFileWithMaxCount: 20
+              NSExtensionActivationSupportsImageWithMaxCount: 20
+              NSExtensionActivationSupportsMovieWithMaxCount: 5
+              NSExtensionActivationSupportsText: true
 
 schemes:
   CryptoMako:
     build:
       targets:
         CryptoMako: all
+        CryptoMakoFileProvider: all
+        CryptoMakoShare: all
     run:
       config: Debug

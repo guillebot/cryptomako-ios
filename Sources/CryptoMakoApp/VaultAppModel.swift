@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import FileProvider
 import CryptoMakoS3
 import CryptoMakoShared
 import CryptoMakoVault
@@ -22,11 +23,22 @@ final class VaultAppModel: ObservableObject {
     @Published var statusMessage: String = ""
     @Published var previewText: String?
     @Published var previewTitle: String?
+    @Published var isBusy = false
+    @Published var lastError: String?
 
-    /// Writes are fail-closed in M1 — surface this in the UI.
-    let writesEnabled = false
+    // M4 backup progress
+    @Published var backupActive = false
+    @Published var backupDone = 0
+    @Published var backupTotal = 0
+    @Published var backupCurrentName = ""
+    @Published var backupSkipped = 0
+
+    /// M2+: light writes are enabled; success only after remote put/delete.
+    let writesEnabled = true
 
     private var session: VaultSession?
+    private var registeredDomainID: String?
+    private var backupTask: Task<Void, Never>?
 
     var currentDirId: String {
         pathStack.last?.dirId ?? ""
@@ -35,6 +47,11 @@ final class VaultAppModel: ObservableObject {
     var currentPathLabel: String {
         if pathStack.isEmpty { return "/" }
         return "/" + pathStack.map(\.name).joined(separator: "/")
+    }
+
+    var isUnlocked: Bool {
+        if case .browsing = phase { return true }
+        return false
     }
 
     init() {
@@ -59,6 +76,7 @@ final class VaultAppModel: ObservableObject {
             statusMessage = "Connection saved (secrets in Keychain)."
         } catch {
             statusMessage = "Save failed: \(error.localizedDescription)"
+            lastError = error.localizedDescription
         }
     }
 
@@ -66,6 +84,7 @@ final class VaultAppModel: ObservableObject {
         phase = .unlocking
         statusMessage = "Unlocking…"
         previewText = nil
+        lastError = nil
         do {
             let store = try makeStore()
             let location: VaultLocation
@@ -96,21 +115,28 @@ final class VaultAppModel: ObservableObject {
             saveConnection()
             phase = .browsing
             statusMessage = "Unlocked (format \(session.config.format))."
+            await registerFileProviderDomainIfNeeded()
+            await importShareInbox()
         } catch {
             session = nil
             nodes = []
             phase = .error(error.localizedDescription)
             statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
         }
     }
 
     func lock() {
+        backupTask?.cancel()
+        backupTask = nil
+        backupActive = false
         session = nil
         nodes = []
         pathStack = []
         previewText = nil
         phase = .locked
         statusMessage = "Locked."
+        Task { await removeFileProviderDomains() }
     }
 
     func enterDirectory(_ node: VaultNode) async {
@@ -120,6 +146,7 @@ final class VaultAppModel: ObservableObject {
             try await reloadListing()
         } catch {
             statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
             _ = pathStack.popLast()
         }
     }
@@ -131,6 +158,7 @@ final class VaultAppModel: ObservableObject {
             try await reloadListing()
         } catch {
             statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
         }
     }
 
@@ -152,12 +180,300 @@ final class VaultAppModel: ObservableObject {
             }
         } catch {
             statusMessage = error.localizedDescription
+            lastError = error.localizedDescription
         }
     }
 
-    func writeStubMessage() -> String {
-        "Writes are fail-closed in M1. Create / upload / delete land in M2."
+    // MARK: - M2 Writes (fail-closed)
+
+    func createFolder(named rawName: String) async {
+        guard writesEnabled, let session else { return }
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            statusMessage = "Folder name is empty."
+            return
+        }
+        isBusy = true
+        statusMessage = "Creating folder \(name)…"
+        defer { isBusy = false }
+        do {
+            _ = try await session.createDirectory(parentDirId: currentDirId, cleartextName: name)
+            try await reloadListing()
+            await signalFileProviderRefresh()
+            statusMessage = "Created folder \(name)."
+            lastError = nil
+        } catch {
+            statusMessage = "Create folder failed: \(error.localizedDescription)"
+            lastError = error.localizedDescription
+        }
     }
+
+    func uploadFiles(from urls: [URL]) async {
+        guard writesEnabled, let session else { return }
+        guard !urls.isEmpty else { return }
+        isBusy = true
+        defer { isBusy = false }
+        var ok = 0
+        var failed: [String] = []
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let name = url.lastPathComponent
+            statusMessage = "Uploading \(name)…"
+            do {
+                _ = try await session.createOrOverwriteFile(
+                    parentDirId: currentDirId,
+                    cleartextName: name,
+                    contentsURL: url
+                )
+                ok += 1
+            } catch {
+                failed.append("\(name): \(error.localizedDescription)")
+            }
+        }
+        do {
+            try await reloadListing()
+            await signalFileProviderRefresh()
+        } catch {
+            failed.append(error.localizedDescription)
+        }
+        if failed.isEmpty {
+            statusMessage = "Uploaded \(ok) file(s)."
+            lastError = nil
+        } else {
+            let msg = "Uploaded \(ok); failed: \(failed.joined(separator: "; "))"
+            statusMessage = msg
+            lastError = msg
+        }
+    }
+
+    func deleteNode(_ node: VaultNode) async {
+        guard writesEnabled, let session else { return }
+        isBusy = true
+        statusMessage = "Deleting \(node.cleartextName)…"
+        defer { isBusy = false }
+        do {
+            try await session.deleteNode(node)
+            try await reloadListing()
+            await signalFileProviderRefresh()
+            statusMessage = "Deleted \(node.cleartextName)."
+            lastError = nil
+        } catch {
+            statusMessage = "Delete failed: \(error.localizedDescription)"
+            lastError = error.localizedDescription
+        }
+    }
+
+    // MARK: - M3 Share inbox
+
+    func importShareInbox() async {
+        guard writesEnabled, let session else { return }
+        let staged = ShareInbox.listStaged()
+        guard !staged.isEmpty else { return }
+        isBusy = true
+        defer { isBusy = false }
+        var ok = 0
+        for url in staged {
+            // Strip the UUID- prefix added by ShareInbox.stage
+            let display = displayNameFromStaged(url)
+            statusMessage = "Importing shared \(display)…"
+            do {
+                _ = try await session.createOrOverwriteFile(
+                    parentDirId: currentDirId,
+                    cleartextName: display,
+                    contentsURL: url
+                )
+                ShareInbox.remove(url)
+                ok += 1
+            } catch {
+                statusMessage = "Share import failed for \(display): \(error.localizedDescription)"
+                lastError = error.localizedDescription
+            }
+        }
+        if ok > 0 {
+            do { try await reloadListing() } catch {
+                lastError = error.localizedDescription
+            }
+            await signalFileProviderRefresh()
+            statusMessage = "Imported \(ok) shared file(s) into \(currentPathLabel)."
+        }
+    }
+
+    private func displayNameFromStaged(_ url: URL) -> String {
+        let base = url.lastPathComponent
+        if let dash = base.firstIndex(of: "-"), dash > base.startIndex {
+            let after = base.index(after: dash)
+            let rest = String(base[after...])
+            if !rest.isEmpty { return rest }
+        }
+        return base
+    }
+
+    // MARK: - M4 On-device backup
+
+    func cancelBackup() {
+        backupTask?.cancel()
+        backupTask = nil
+        backupActive = false
+        statusMessage = "Backup cancelled."
+    }
+
+    func backupFolder(at rootURL: URL) {
+        guard writesEnabled, session != nil else { return }
+        backupTask?.cancel()
+        backupActive = true
+        backupDone = 0
+        backupTotal = 0
+        backupSkipped = 0
+        backupCurrentName = ""
+        statusMessage = "Scanning \(rootURL.lastPathComponent)…"
+
+        backupTask = Task { [weak self] in
+            guard let self else { return }
+            let accessed = rootURL.startAccessingSecurityScopedResource()
+            defer { if accessed { rootURL.stopAccessingSecurityScopedResource() } }
+            do {
+                try await self.runBackup(from: rootURL)
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.backupActive = false
+                    self.statusMessage = "Backup cancelled."
+                }
+            } catch {
+                await MainActor.run {
+                    self.backupActive = false
+                    self.statusMessage = "Backup failed: \(error.localizedDescription)"
+                    self.lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func runBackup(from rootURL: URL) async throws {
+        guard let session else { return }
+        let excludes = BackupSyncExcludesStore.load()
+        let folderName = rootURL.lastPathComponent.isEmpty ? "Backup" : rootURL.lastPathComponent
+        let vaultRoot = "Backups/\(folderName)"
+
+        // Collect files first for progress total.
+        var files: [(relative: String, url: URL)] = []
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isHiddenKey],
+            options: [.skipsPackageDescendants]
+        ) else {
+            throw UnlockError.missingLocalPath
+        }
+
+        while let item = enumerator.nextObject() as? URL {
+            try Task.checkCancellation()
+            let values = try item.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+            let rel = item.path.replacingOccurrences(of: rootURL.path, with: "")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if values.isDirectory == true {
+                if excludes.shouldSkipDirectory(named: item.lastPathComponent) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            guard values.isRegularFile == true else { continue }
+            if excludes.shouldSkipRelativePath(rel) || excludes.shouldSkipFile(named: item.lastPathComponent) {
+                backupSkipped += 1
+                continue
+            }
+            files.append((rel, item))
+            backupTotal = files.count
+            backupCurrentName = rel
+        }
+
+        backupTotal = files.count
+        if files.isEmpty {
+            backupActive = false
+            statusMessage = "Nothing to back up (all excluded or empty)."
+            return
+        }
+
+        // Ensure Backups/<folder>/… directory tree on demand per file parent.
+        var dirCache: [String: String] = ["": try await session.ensureDirectoryPath(vaultRoot)]
+
+        for (index, entry) in files.enumerated() {
+            try Task.checkCancellation()
+            backupCurrentName = entry.relative
+            backupDone = index
+            statusMessage = "Backing up \(index + 1)/\(files.count): \(entry.relative)"
+
+            let parentRel = (entry.relative as NSString).deletingLastPathComponent
+            let parentKey = parentRel == "." ? "" : parentRel
+            let parentDirId: String
+            if let cached = dirCache[parentKey] {
+                parentDirId = cached
+            } else {
+                let path = parentKey.isEmpty ? vaultRoot : "\(vaultRoot)/\(parentKey)"
+                parentDirId = try await session.ensureDirectoryPath(path)
+                dirCache[parentKey] = parentDirId
+            }
+
+            let name = (entry.relative as NSString).lastPathComponent
+            _ = try await session.createOrOverwriteFile(
+                parentDirId: parentDirId,
+                cleartextName: name,
+                contentsURL: entry.url
+            )
+            backupDone = index + 1
+        }
+
+        try await reloadListing()
+        await signalFileProviderRefresh()
+        backupActive = false
+        statusMessage = "Backup done: \(backupDone) file(s), skipped \(backupSkipped)."
+        lastError = nil
+    }
+
+    // MARK: - File Provider domain (M3)
+
+    private func registerFileProviderDomainIfNeeded() async {
+        // Files location is for remote S3 vaults; local fixtures stay in-app only.
+        guard !settings.isLocal, let jti = session?.config.jti, !jti.isEmpty else { return }
+        let id = AppIdentifiers.domainIdentifier(jti: jti)
+        let domain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(id),
+            displayName: "CryptoMako"
+        )
+        do {
+            let existing = (try? await NSFileProviderManager.domains()) ?? []
+            for d in existing where d.identifier.rawValue.hasPrefix("cryptomako.ios.") {
+                try? await NSFileProviderManager.remove(d)
+            }
+            try await NSFileProviderManager.add(domain)
+            registeredDomainID = id
+            statusMessage += " Files location registered."
+        } catch {
+            // Non-fatal: unlock still succeeds; Files may need a device build + provisioning.
+            statusMessage += " (Files provider: \(error.localizedDescription))"
+        }
+    }
+
+    private func removeFileProviderDomains() async {
+        let existing = (try? await NSFileProviderManager.domains()) ?? []
+        for d in existing where d.identifier.rawValue.hasPrefix("cryptomako.ios.") {
+            try? await NSFileProviderManager.remove(d)
+        }
+        registeredDomainID = nil
+    }
+
+    private func signalFileProviderRefresh() async {
+        guard let id = registeredDomainID else { return }
+        let domain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier(id),
+            displayName: "CryptoMako"
+        )
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        try? await manager.signalEnumerator(for: .rootContainer)
+        try? await manager.signalEnumerator(for: .workingSet)
+    }
+
+    // MARK: - Internals
 
     private func reloadListing() async throws {
         guard let session else { return }

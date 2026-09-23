@@ -86,3 +86,15 @@ final class CredentialStoreTests: XCTestCase {
         XCTAssertThrowsError(try CredentialStore.read(account: account, useAccessGroup: false))
     }
 }
+
+#if os(macOS) || os(iOS)
+final class ShareInboxAndExcludesTests: XCTestCase {
+    func testBackupExcludesSkipJunk() {
+        let ex = BackupSyncExcludes.default
+        XCTAssertTrue(ex.shouldSkipFile(named: ".DS_Store"))
+        XCTAssertTrue(ex.shouldSkipDirectory(named: "node_modules"))
+        XCTAssertTrue(ex.shouldSkipRelativePath("src/node_modules/pkg/index.js"))
+        XCTAssertFalse(ex.shouldSkipFile(named: "photo.jpg"))
+    }
+}
+#endif
