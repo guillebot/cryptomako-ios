@@ -96,3 +96,15 @@ Watch TestFlight → iOS builds for **Processing** → **Ready to Test**. Intern
 - Build **102** ships this icon.
 - Suggested privacy policy URL (reuse Android family page, live): https://guillebot.github.io/cryptomako-android/privacy.html
 - Display name / CFBundleDisplayName: CryptoMako (C+M).
+
+
+## TestFlight upload build 102 (2026-09-23 ~19:01 ART)
+
+- Commit: `102f47e` — locked brand App Icon + `CURRENT_PROJECT_VERSION=102`.
+- Archive + Dist export + upload via `./scripts/archive-and-upload.sh`: **Upload succeeded** (“Uploaded package is processing”).
+- Archive CFBundleShortVersionString **1.0.0**, CFBundleVersion **102**.
+- AppIcon confirmed in `Assets.car` (1024×1024 phone + pad Icon Image from vendored brand mark).
+- TestFlight: https://appstoreconnect.apple.com/apps/6815413401/testflight/ios
+- App listing: https://appstoreconnect.apple.com/apps/6815413401/appstore
+- Privacy policy URL found in family (Android Play draft, live): https://guillebot.github.io/cryptomako-android/privacy.html — paste into ASC App Privacy / Review Information (no ASC API key on this Mac to set automatically).
+- Listing display name: confirm/rename to **CryptoMako** in ASC if Connect still shows “Cryptomako”.
