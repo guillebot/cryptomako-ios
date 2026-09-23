@@ -1,5 +1,10 @@
 # CryptoMako for iOS / iPadOS
 
+<p align="center">
+  <img src="docs/assets/brand/icon-1024.png" alt="CryptoMako" width="160" height="160" />
+</p>
+
+
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-iOS%2017%2B-black.svg)](https://github.com/guillebot/cryptomako-ios)
 [![Swift](https://img.shields.io/badge/Swift-5.10%2B-orange.svg)](https://swift.org)
