@@ -84,7 +84,7 @@ Watch TestFlight → iOS builds for **Processing** → **Ready to Test**. Intern
 
 ## TestFlight upload (2026-09-23)
 
-- ASC app **Cryptomako** exists (`Adam ID` / ASC id `6815413401`, bundle `net.gschimmel.cryptomako.ios`).
+- ASC app **CryptoMako** exists (`Adam ID` / ASC id `6815413401`, bundle `net.gschimmel.cryptomako.ios`).
 - First upload attempt (build **100**) rejected: missing `NSExtensionFileProviderDocumentGroup` (ITMS) — fixed by ensuring the key is present at Info.plist root **and** under `NSExtension`, plus `INFOPLIST_KEY_…`.
 - Upload **succeeded** for version **1.0.0** build **101** — “Uploaded package is processing.”
 - TestFlight: https://appstoreconnect.apple.com/apps/6815413401/testflight/ios
