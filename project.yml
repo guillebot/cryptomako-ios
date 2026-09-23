@@ -156,6 +156,24 @@ targets:
               NSExtensionActivationSupportsMovieWithMaxCount: 5
               NSExtensionActivationSupportsText: true
 
+
+  CryptoMakoASCUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/ASCScreenshotUITests
+    dependencies:
+      - target: CryptoMako
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: net.gschimmel.cryptomako.ios.ASCUITests
+        PRODUCT_NAME: CryptoMakoASCUITests
+        TARGETED_DEVICE_FAMILY: "1,2"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: "H4K6YW7MQM"
+        TEST_TARGET_NAME: CryptoMako
+
 schemes:
   CryptoMako:
     build:
@@ -163,5 +181,10 @@ schemes:
         CryptoMako: all
         CryptoMakoFileProvider: all
         CryptoMakoShare: all
+        CryptoMakoASCUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - CryptoMakoASCUITests

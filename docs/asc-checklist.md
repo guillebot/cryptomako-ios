@@ -108,3 +108,12 @@ Watch TestFlight → iOS builds for **Processing** → **Ready to Test**. Intern
 - App listing: https://appstoreconnect.apple.com/apps/6815413401/appstore
 - Privacy policy URL found in family (Android Play draft, live): https://guillebot.github.io/cryptomako-android/privacy.html — paste into ASC App Privacy / Review Information (no ASC API key on this Mac to set automatically).
 - Listing display name: confirm/rename to **CryptoMako** in ASC if Connect still shows “Cryptomako”.
+
+## Simulator ASC screenshots (2026-09-23 ~19:17 ART)
+
+- Path: `docs/asc-screenshots/`
+- **iPhone 16 Pro Max** (6.9″): `69-01-unlock.png` … `69-05-preview.png` at **1320×2868**
+- **iPhone 16 Plus** (6.7″): `67-01-unlock.png` … `67-05-preview.png` at **1290×2796**
+- Unlock used **Local fixtures** (no S3); marketing unlock frame shows the S3 HTTPS form.
+- Regenerator: `Tests/ASCScreenshotUITests` (`CryptoMakoASCUITests` in `project.yml`).
+- Upload: drag into ASC App Store → Screenshots (no AuthKey on this Mac).
