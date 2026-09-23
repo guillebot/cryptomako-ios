@@ -259,11 +259,10 @@ public final class S3ObjectStore: ObjectStore {
         case 404:
             throw ObjectStoreError.notFound(key)
         case 403:
-            let detail = body.flatMap { String(data: $0.prefix(512), encoding: .utf8) } ?? ""
-            throw ObjectStoreError.transport("access denied for \(key) (HTTP 403) \(detail)")
+            // Do not echo response bodies — may contain request IDs / bucket hints; never Authorization.
+            throw ObjectStoreError.transport("access denied for \(key) (HTTP 403)")
         default:
-            let detail = body.flatMap { String(data: $0.prefix(512), encoding: .utf8) } ?? ""
-            throw ObjectStoreError.transport("HTTP \(http.statusCode) for \(key) \(detail)")
+            throw ObjectStoreError.transport("HTTP \(http.statusCode) for \(key)")
         }
     }
 

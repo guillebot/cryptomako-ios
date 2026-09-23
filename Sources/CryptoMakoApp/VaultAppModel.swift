@@ -62,6 +62,7 @@ final class VaultAppModel: ObservableObject {
         if let pw = try? CredentialStore.readSharedOrLocal(account: AppIdentifiers.passwordAccount) {
             password = pw
         }
+        _ = ShareInbox.purgeStale()
     }
 
     func saveConnection() {
@@ -116,6 +117,7 @@ final class VaultAppModel: ObservableObject {
             phase = .browsing
             statusMessage = "Unlocked (format \(session.config.format))."
             await registerFileProviderDomainIfNeeded()
+            _ = ShareInbox.purgeStale()
             await importShareInbox()
         } catch {
             session = nil
@@ -134,8 +136,11 @@ final class VaultAppModel: ObservableObject {
         nodes = []
         pathStack = []
         previewText = nil
+        previewTitle = nil
         phase = .locked
         statusMessage = "Locked."
+        // Drop in-process cleartext leftovers; Keychain secrets stay so Files can remount.
+        Self.scrubOpenTemps()
         Task { await removeFileProviderDomains() }
     }
 
@@ -165,18 +170,20 @@ final class VaultAppModel: ObservableObject {
     func openFile(_ node: VaultNode) async {
         guard let session, node.kind == .file else { return }
         statusMessage = "Decrypting \(node.cleartextName)…"
+        let dest = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cryptomako-open-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dest) }
         do {
-            let dest = FileManager.default.temporaryDirectory
-                .appendingPathComponent("cryptomako-open-\(UUID().uuidString)-\(node.cleartextName)")
             try await session.fetch(node: node, to: dest)
+            // Prefer in-memory text preview; never leave cleartext on disk or show temp paths.
             if let text = try? String(contentsOf: dest, encoding: .utf8), text.utf8.count < 512_000 {
                 previewTitle = node.cleartextName
                 previewText = text
                 statusMessage = "Opened \(node.cleartextName)"
             } else {
                 previewTitle = node.cleartextName
-                previewText = "(binary or large file — saved to temp)\n\(dest.path)"
-                statusMessage = "Downloaded \(node.cleartextName)"
+                previewText = "(binary or large file — preview not shown; re-open via Files after unlock)"
+                statusMessage = "Opened \(node.cleartextName) (binary — not cached)"
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -483,6 +490,22 @@ final class VaultAppModel: ObservableObject {
                 return lhs.kind == .directory && rhs.kind != .directory
             }
             return lhs.cleartextName.localizedCaseInsensitiveCompare(rhs.cleartextName) == .orderedAscending
+        }
+    }
+
+    /// Best-effort wipe of host temp cleartext from open/preview.
+    private static func scrubOpenTemps() {
+        let tmp = FileManager.default.temporaryDirectory
+        guard let items = try? FileManager.default.contentsOfDirectory(
+            at: tmp,
+            includingPropertiesForKeys: nil,
+            options: []
+        ) else { return }
+        for url in items where url.lastPathComponent.hasPrefix("cryptomako-open-")
+            || url.lastPathComponent.hasPrefix("cryptomako-enc-")
+            || url.lastPathComponent.hasPrefix("cryptomako-") && url.pathExtension == "out"
+        {
+            try? FileManager.default.removeItem(at: url)
         }
     }
 

@@ -98,3 +98,24 @@ final class ShareInboxAndExcludesTests: XCTestCase {
     }
 }
 #endif
+
+final class ShareInboxSecurityTests: XCTestCase {
+    func testPurgeStaleRemovesOldFiles() throws {
+        // App Group may be nil in unsigned swift test — skip gracefully.
+        guard let dir = try? ShareInbox.ensureDirectory() else {
+            throw XCTSkip("App Group container unavailable in this environment")
+        }
+        let stale = dir.appendingPathComponent("00000000-0000-0000-0000-000000000000-old.txt")
+        try Data("stale".utf8).write(to: stale)
+        var values = URLResourceValues()
+        // Back-date mtime via setAttributes
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-48 * 60 * 60)],
+            ofItemAtPath: stale.path
+        )
+        let removed = ShareInbox.purgeStale(maxAge: 24 * 60 * 60)
+        XCTAssertGreaterThanOrEqual(removed, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+        _ = values
+    }
+}
