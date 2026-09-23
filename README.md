@@ -18,7 +18,7 @@ Sibling of the macOS app **[guillebot/cryptomako](https://github.com/guillebot/c
 | **M3** | Files provider (Files app location) + Share extension → inbox → vault |
 | **M4** | On-device folder backup into `Backups/…` with excludes |
 
-See [docs/ios-milestones.md](docs/ios-milestones.md).
+See [docs/ios-milestones.md](docs/ios-milestones.md) and [docs/asc-checklist.md](docs/asc-checklist.md) (TestFlight / ASC).
 
 **Version:** 1.0.0 (product-complete for TestFlight / App Store Connect upload in a later pass).
 
