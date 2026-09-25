@@ -9,10 +9,22 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         case custom
     }
 
+    /// Backup vs Sync transfer mode (shared cross-platform prefs key `backupTransferMode`).
+    /// - `backup` (default): put/update only. Never deletes the local source. Never deletes vault extras.
+    /// - `sync`: same puts, then delete vault ciphertext orphans under that source's `Backups/<folder>/`
+    ///   only (fail-closed). Never deletes the local source.
+    public enum BackupTransferMode: String, Codable, Sendable, CaseIterable, Hashable {
+        case backup
+        case sync
+    }
+
     public var proxyMode: ProxyMode
     public var proxyHost: String
     public var proxyPort: Int
     public var proxyUsername: String
+
+    /// Prefs key `backupTransferMode`. Default `.backup` (safer: no vault orphan deletes).
+    public var backupTransferMode: BackupTransferMode
 
     /// When true, Backup Sync paces puts to approximately `syncUploadCapMbps`.
     public var limitSyncUploadBandwidth: Bool
@@ -31,6 +43,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         proxyHost: String = "",
         proxyPort: Int = 8080,
         proxyUsername: String = "",
+        backupTransferMode: BackupTransferMode = .backup,
         limitSyncUploadBandwidth: Bool = false,
         syncUploadCapMbps: Double = 50,
         syncSmallPutConcurrency: Int = 96,
@@ -41,6 +54,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         self.proxyHost = proxyHost
         self.proxyPort = proxyPort
         self.proxyUsername = proxyUsername
+        self.backupTransferMode = backupTransferMode
         self.limitSyncUploadBandwidth = limitSyncUploadBandwidth
         self.syncUploadCapMbps = syncUploadCapMbps
         self.syncSmallPutConcurrency = syncSmallPutConcurrency
@@ -52,6 +66,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case proxyMode, proxyHost, proxyPort, proxyUsername
+        case backupTransferMode
         case limitSyncUploadBandwidth, syncUploadCapMbps
         case syncSmallPutConcurrency, syncMediumPutConcurrency, syncLargePutConcurrency
     }
@@ -62,6 +77,7 @@ public struct AppPreferences: Codable, Equatable, Sendable {
         proxyHost = try c.decodeIfPresent(String.self, forKey: .proxyHost) ?? ""
         proxyPort = try c.decodeIfPresent(Int.self, forKey: .proxyPort) ?? 8080
         proxyUsername = try c.decodeIfPresent(String.self, forKey: .proxyUsername) ?? ""
+        backupTransferMode = try c.decodeIfPresent(BackupTransferMode.self, forKey: .backupTransferMode) ?? .backup
         limitSyncUploadBandwidth = try c.decodeIfPresent(Bool.self, forKey: .limitSyncUploadBandwidth) ?? false
         syncUploadCapMbps = try c.decodeIfPresent(Double.self, forKey: .syncUploadCapMbps) ?? 50
         syncSmallPutConcurrency = try c.decodeIfPresent(Int.self, forKey: .syncSmallPutConcurrency) ?? 96

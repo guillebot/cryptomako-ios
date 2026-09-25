@@ -32,6 +32,14 @@ final class VaultAppModel: ObservableObject {
     @Published var backupTotal = 0
     @Published var backupCurrentName = ""
     @Published var backupSkipped = 0
+    /// Vault ciphertext files removed in Sync mode (always 0 in Backup mode).
+    @Published var backupDeleted = 0
+    /// Persisted backup sources (bookmarks + id/displayName).
+    @Published var backupSources: [BackupSource] = BackupSourcesStore.load().sources
+    /// Soft-warn banner after adding a nested/overlapping source.
+    @Published var backupOverlapWarning: String?
+    /// Shared prefs transfer mode (key `backupTransferMode`).
+    @Published var backupTransferMode: AppPreferences.BackupTransferMode = AppPreferences.load().backupTransferMode
 
     /// M2+: light writes are enabled; success only after remote put/delete.
     let writesEnabled = true
@@ -157,6 +165,7 @@ final class VaultAppModel: ObservableObject {
         backupCurrentName = ""
         backupDone = 0
         backupTotal = 0
+        backupDeleted = 0
         if let userMessage {
             statusMessage = userMessage
         }
@@ -334,19 +343,87 @@ final class VaultAppModel: ObservableObject {
         return base
     }
 
-    // MARK: - M4 On-device backup
+    // MARK: - M4 On-device backup / Sync
 
     func cancelBackup() {
-        cancelOnDeviceBackup(userMessage: "Backup cancelled.")
+        cancelOnDeviceBackup(userMessage: "\(backupVerb) cancelled.")
     }
 
+    /// Persist transfer mode (shared key `backupTransferMode`).
+    func setBackupTransferMode(_ mode: AppPreferences.BackupTransferMode) {
+        backupTransferMode = mode
+        var prefs = AppPreferences.load()
+        prefs.backupTransferMode = mode
+        try? prefs.save()
+    }
+
+    private var backupVerb: String {
+        backupTransferMode == .sync ? "Sync" : "Backup"
+    }
+
+    /// Soft-warn on nested overlap; still adds. Creates a security-scoped bookmark when possible.
+    @discardableResult
+    func addBackupSource(from rootURL: URL) -> String? {
+        let accessed = rootURL.startAccessingSecurityScopedResource()
+        defer { if accessed { rootURL.stopAccessingSecurityScopedResource() } }
+        let path = rootURL.path
+        var bookmark: Data?
+        do {
+            bookmark = try rootURL.bookmarkData(
+                options: [.minimalBookmark],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            bookmark = nil
+        }
+        var store = BackupSourcesStore.load()
+        let result = store.addSource(
+            path: path,
+            displayName: rootURL.lastPathComponent,
+            bookmarkData: bookmark
+        )
+        try? store.save()
+        backupSources = store.sources
+        backupOverlapWarning = result.softWarn
+        return result.softWarn
+    }
+
+    func removeBackupSource(id: String) {
+        var store = BackupSourcesStore.load()
+        store.removeSource(id: id)
+        try? store.save()
+        backupSources = store.sources
+        if let msg = BackupPathOverlap.overlapErrorMessage(backupSources) {
+            backupOverlapWarning = "Overlap remains: " + msg
+        } else {
+            backupOverlapWarning = nil
+        }
+    }
+
+    /// Pick a folder → persist as source (soft-warn) → run Backup or Sync for that folder.
     func backupFolder(at rootURL: URL) {
         guard writesEnabled, session != nil else { return }
+        _ = addBackupSource(from: rootURL)
+
+        // Hard-fail Sync when any persisted sources overlap (Platforms consensus).
+        if backupTransferMode == .sync {
+            do {
+                try BackupPathOverlap.throwIfOverlapping(backupSources)
+            } catch {
+                backupActive = false
+                statusMessage = error.localizedDescription
+                lastError = error.localizedDescription
+                return
+            }
+        }
+
         backupTask?.cancel()
         backupActive = true
         backupDone = 0
         backupTotal = 0
         backupSkipped = 0
+        backupDeleted = 0
         backupCurrentName = ""
         statusMessage = "Scanning \(rootURL.lastPathComponent)…"
 
@@ -359,25 +436,100 @@ final class VaultAppModel: ObservableObject {
             } catch is CancellationError {
                 await MainActor.run {
                     self.backupActive = false
-                    self.statusMessage = "Backup cancelled."
+                    self.statusMessage = "\(self.backupVerb) cancelled."
                 }
             } catch {
                 await MainActor.run {
                     self.backupActive = false
-                    self.statusMessage = "Backup failed: \(error.localizedDescription)"
+                    self.statusMessage = "\(self.backupVerb) failed: \(error.localizedDescription)"
                     self.lastError = error.localizedDescription
                 }
             }
         }
     }
 
-    private func runBackup(from rootURL: URL) async throws {
+    /// Run Backup/Sync for every persisted source (resolving bookmarks when present).
+    func backupAllSources() {
+        guard writesEnabled, session != nil else { return }
+        guard !backupSources.isEmpty else {
+            statusMessage = "Add a folder first."
+            return
+        }
+        if backupTransferMode == .sync {
+            do {
+                try BackupPathOverlap.throwIfOverlapping(backupSources)
+            } catch {
+                statusMessage = error.localizedDescription
+                lastError = error.localizedDescription
+                return
+            }
+        }
+
+        let sources = backupSources
+        backupTask?.cancel()
+        backupActive = true
+        backupDone = 0
+        backupTotal = 0
+        backupSkipped = 0
+        backupDeleted = 0
+        backupCurrentName = ""
+        statusMessage = "\(backupVerb) \(sources.count) source(s)…"
+
+        backupTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for source in sources {
+                    try Task.checkCancellation()
+                    let url = try self.resolveSourceURL(source)
+                    let accessed = url.startAccessingSecurityScopedResource()
+                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                    try await self.runBackup(from: url, folderNameOverride: source.displayName)
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.backupActive = false
+                    self.statusMessage = "\(self.backupVerb) cancelled."
+                }
+            } catch {
+                await MainActor.run {
+                    self.backupActive = false
+                    self.statusMessage = "\(self.backupVerb) failed: \(error.localizedDescription)"
+                    self.lastError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func resolveSourceURL(_ source: BackupSource) throws -> URL {
+        if let data = source.bookmarkData {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            return url
+        }
+        return URL(fileURLWithPath: source.path, isDirectory: true)
+    }
+
+    private func runBackup(from rootURL: URL, folderNameOverride: String? = nil) async throws {
         guard let session else { return }
         let excludes = BackupSyncExcludesStore.load()
-        let folderName = rootURL.lastPathComponent.isEmpty ? "Backup" : rootURL.lastPathComponent
+        let mode = backupTransferMode
+        let folderName: String = {
+            if let override = folderNameOverride?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !override.isEmpty
+            {
+                return override
+            }
+            let name = rootURL.lastPathComponent
+            return name.isEmpty ? "Backup" : name
+        }()
         let vaultRoot = "Backups/\(folderName)"
 
-        // Collect files first for progress total.
+        // Collect files first for progress total (+ Sync orphan set).
         var files: [(relative: String, url: URL)] = []
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
@@ -410,20 +562,23 @@ final class VaultAppModel: ObservableObject {
         }
 
         backupTotal = files.count
-        if files.isEmpty {
+        let localEligible = Set(files.map(\.relative))
+
+        // Put/update every eligible local file (Backup and Sync).
+        let rootDirId = try await session.ensureDirectoryPath(vaultRoot)
+        var dirCache: [String: String] = ["": rootDirId]
+
+        if files.isEmpty && mode == .backup {
             backupActive = false
             statusMessage = "Nothing to back up (all excluded or empty)."
             return
         }
 
-        // Ensure Backups/<folder>/… directory tree on demand per file parent.
-        var dirCache: [String: String] = ["": try await session.ensureDirectoryPath(vaultRoot)]
-
         for (index, entry) in files.enumerated() {
             try Task.checkCancellation()
             backupCurrentName = entry.relative
             backupDone = index
-            statusMessage = "Backing up \(index + 1)/\(files.count): \(entry.relative)"
+            statusMessage = "\(backupVerb) \(index + 1)/\(max(files.count, 1)): \(entry.relative)"
 
             let parentRel = (entry.relative as NSString).deletingLastPathComponent
             let parentKey = parentRel == "." ? "" : parentRel
@@ -445,11 +600,67 @@ final class VaultAppModel: ObservableObject {
             backupDone = index + 1
         }
 
+        // Sync mode: delete vault ciphertext orphans under this source's Backups/<folder>/ only.
+        // Never deletes the local/security-scoped source. Fail-closed on remote delete errors.
+        if mode == .sync {
+            statusMessage = "Removing vault-only files under \(vaultRoot)/…"
+            let deleted = try await pruneVaultOrphans(
+                session: session,
+                rootDirId: rootDirId,
+                localFiles: localEligible
+            )
+            backupDeleted += deleted
+        }
+
         try await reloadListing()
         await signalFileProviderRefresh()
         backupActive = false
-        statusMessage = "Backup done: \(backupDone) file(s), skipped \(backupSkipped)."
+        if mode == .sync {
+            statusMessage = "Sync done: \(backupDone) file(s), skipped \(backupSkipped), removed \(backupDeleted) vault-only."
+        } else {
+            statusMessage = "Backup done: \(backupDone) file(s), skipped \(backupSkipped)."
+        }
         lastError = nil
+    }
+
+    /// Sync-only: walk vault folder tree and delete ciphertext missing from `localFiles`.
+    /// Never touches the on-device source tree.
+    private func pruneVaultOrphans(
+        session: VaultSession,
+        rootDirId: String,
+        localFiles: Set<String>
+    ) async throws -> Int {
+        func prune(dirId: String, relPrefix: String) async throws -> Int {
+            try Task.checkCancellation()
+            let children = try await session.list(dirId: dirId)
+            var deleted = 0
+            for child in children {
+                try Task.checkCancellation()
+                let childRel = relPrefix.isEmpty
+                    ? child.cleartextName
+                    : relPrefix + "/" + child.cleartextName
+                backupCurrentName = childRel
+                switch child.kind {
+                case .file, .symlink:
+                    if BackupOrphanPrune.isOrphanFile(relPath: childRel, localFiles: localFiles) {
+                        // Remote ObjectStore ciphertext delete only — never local source.
+                        try await session.deleteFile(node: child)
+                        deleted += 1
+                    }
+                case .directory:
+                    guard let childDirId = child.dirId else { continue }
+                    if !BackupOrphanPrune.hasLocalUnder(relDir: childRel, localFiles: localFiles) {
+                        try await session.deleteDirectory(node: child, recursive: true)
+                        deleted += 1
+                    } else {
+                        deleted += try await prune(dirId: childDirId, relPrefix: childRel)
+                    }
+                }
+            }
+            return deleted
+        }
+
+        return try await prune(dirId: rootDirId, relPrefix: "")
     }
 
     // MARK: - File Provider domain (M3)

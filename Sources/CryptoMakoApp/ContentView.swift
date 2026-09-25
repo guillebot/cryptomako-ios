@@ -202,6 +202,80 @@ struct BrowseView: View {
                 }
             }
 
+            Section("Backup / Sync") {
+                Picker("Transfer mode", selection: Binding(
+                    get: { model.backupTransferMode },
+                    set: { model.setBackupTransferMode($0) }
+                )) {
+                    Text("Backup").tag(AppPreferences.BackupTransferMode.backup)
+                    Text("Sync").tag(AppPreferences.BackupTransferMode.sync)
+                }
+                .pickerStyle(.segmented)
+                .disabled(model.backupActive)
+
+                if model.backupTransferMode == .backup {
+                    Text("Backup copies and updates into Backups/<folder>/. It never deletes the on-device source, and it does not remove vault files that are missing locally.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Sync copies and updates, then deletes vault ciphertext under Backups/<folder>/ that is missing from the on-device folder. It never deletes the on-device source.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if let warn = model.backupOverlapWarning {
+                    Text(warn)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+
+                if !model.backupSources.isEmpty {
+                    ForEach(model.backupSources) { source in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(source.displayName)
+                                    .font(.body)
+                                Text(source.path)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            Button(role: .destructive) {
+                                model.removeBackupSource(id: source.id)
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(model.isBusy || model.backupActive)
+                            .accessibilityLabel("Remove \(source.displayName)")
+                        }
+                    }
+
+                    Button {
+                        model.backupAllSources()
+                    } label: {
+                        Label(
+                            model.backupTransferMode == .sync ? "Sync all sources" : "Backup all sources",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                    }
+                    .disabled(model.isBusy || model.backupActive || !model.isUnlocked)
+                }
+
+                Button {
+                    showFolderPicker = true
+                } label: {
+                    Label(
+                        model.backupTransferMode == .sync
+                            ? "Sync folder into vault…"
+                            : "Backup folder into vault…",
+                        systemImage: "externaldrive.badge.plus"
+                    )
+                }
+                .disabled(model.isBusy || model.backupActive)
+            }
+
             Section("Actions") {
                 Button {
                     newFolderName = ""
@@ -219,13 +293,6 @@ struct BrowseView: View {
                 .disabled(model.isBusy || model.backupActive)
 
                 Button {
-                    showFolderPicker = true
-                } label: {
-                    Label("Backup folder into vault…", systemImage: "externaldrive.badge.plus")
-                }
-                .disabled(model.isBusy || model.backupActive)
-
-                Button {
                     Task { await model.importShareInbox() }
                 } label: {
                     Label("Import shared inbox", systemImage: "square.and.arrow.down")
@@ -234,7 +301,7 @@ struct BrowseView: View {
             }
 
             if model.backupActive {
-                Section("Backup") {
+                Section(model.backupTransferMode == .sync ? "Sync" : "Backup") {
                     ProgressView(value: Double(model.backupDone), total: Double(max(model.backupTotal, 1))) {
                         Text("\(model.backupDone)/\(model.backupTotal)")
                     }
@@ -244,7 +311,12 @@ struct BrowseView: View {
                             .lineLimit(2)
                             .foregroundStyle(.secondary)
                     }
-                    Button("Cancel backup", role: .destructive) {
+                    if model.backupTransferMode == .sync && model.backupDeleted > 0 {
+                        Text("Removed \(model.backupDeleted) vault-only file(s)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    Button(model.backupTransferMode == .sync ? "Cancel sync" : "Cancel backup", role: .destructive) {
                         model.cancelBackup()
                     }
                 }
